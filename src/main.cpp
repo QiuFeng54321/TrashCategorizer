@@ -38,15 +38,15 @@ volatile struct TinyIRReceiverCallbackDataStruct IRCallbackData;
 
 Scheduler TaskScheduler;
 void IRReceive();
-Task IRReceiveTask(50, TASK_FOREVER, &IRReceive, &TaskScheduler);
+Task IRReceiveTask(50, TASK_FOREVER, &IRReceive, &TaskScheduler, true);
 void UpdateStatusLED();
-Task UpdateStatusTask(300, TASK_FOREVER, &UpdateStatusLED, &TaskScheduler);
+Task UpdateStatusTask(100, TASK_FOREVER, &UpdateStatusLED, &TaskScheduler, true);
 void UpdateDistance();
-Task UpdateDistanceTask(50, TASK_FOREVER, &UpdateDistance, &TaskScheduler);
+Task UpdateDistanceTask(50, TASK_FOREVER, &UpdateDistance, &TaskScheduler, true);
 void LearnProcess();
-Task LearnProcessTask(50, TASK_FOREVER, &LearnProcess, &TaskScheduler);
+Task LearnProcessTask(100, TASK_FOREVER, &LearnProcess, &TaskScheduler, true);
 void Process();
-Task ProcessTask(50, TASK_FOREVER, &Process, &TaskScheduler);
+Task ProcessTask(50, TASK_FOREVER, &Process, &TaskScheduler, true);
 
 void setup()
 {
@@ -64,10 +64,14 @@ void setup()
     VisionSensor.writeAlgorithm(ALGORITHM_OBJECT_CLASSIFICATION);
     initPCIInterruptForTinyReceiver();
     Serial.println("Ready to receive NEC IR signals");
+    TaskScheduler.startNow();
 }
 
 void IRReceive()
 {
+    if (IRReceiveTask.isFirstIteration()) {
+      Serial.println("Hi");
+    }
     if (IRCallbackData.justWritten && !IRCallbackData.isRepeat)
     {
         IRCallbackData.justWritten = false;
@@ -108,11 +112,13 @@ void UpdateStatusLED()
 }
 void UpdateDistance()
 {
+    if (!IsProcessing) return;
     Distance = DistanceSensor.measureDistanceCm();
     Serial.println(Distance);
 }
 void LearnProcess()
 {
+    if (!IsLearning) return;
     if (!VisionSensor.learnOnece((int)LearningID))
     {
         Serial.print("Learning not successful on ");
@@ -121,6 +127,7 @@ void LearnProcess()
 }
 void Process()
 {
+    if (!IsProcessing) return;
     if (Distance < 20)
     {
         VisionSensor.request();
@@ -136,18 +143,19 @@ void Process()
 
 void loop()
 {
-    delay(100);
-    IRReceive();
-    UpdateStatusLED();
-    if (IsProcessing)
-    {
-        UpdateDistance();
-        Process();
-    }
-    else if (IsLearning)
-    {
-        LearnProcess();
-    }
+    TaskScheduler.execute();
+    // delay(100);
+    // IRReceive();
+    // UpdateStatusLED();
+    // if (IsProcessing)
+    // {
+    //     UpdateDistance();
+    //     Process();
+    // }
+    // else if (IsLearning)
+    // {
+    //     LearnProcess();
+    // }
 }
 
 void handleReceivedTinyIRData(uint16_t aAddress, uint8_t aCommand, bool isRepeat)
