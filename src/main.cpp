@@ -55,6 +55,8 @@ Task LearnProcessTask(100, TASK_FOREVER, &LearnProcess, &TaskScheduler, true);
 void Process();
 Task ProcessTask(50, TASK_FOREVER, &Process, &TaskScheduler, true);
 
+void WriteNames();
+
 void setup()
 {
     Serial.begin(9600);
@@ -65,15 +67,24 @@ void setup()
     pinMode(StatusRedPin, OUTPUT);
     pinMode(StatusYellowPin, OUTPUT);
     pinMode(StatusGreenPin, OUTPUT);
-    Serial.println("Beginning HuskyLens...");
+    Serial.println("Setting up HuskyLens...");
     VisionSensor.beginI2CUntilSuccess();
+    WriteNames();
     Serial.println("Succeeded");
     VisionSensor.writeAlgorithm(ALGORITHM_OBJECT_CLASSIFICATION);
     initPCIInterruptForTinyReceiver();
     Serial.println("Ready to receive NEC IR signals");
     TaskScheduler.startNow();
 }
-
+void WriteNames() {
+    VisionSensor.writeName("Left", (int)ClassifierID::Left);
+    VisionSensor.writeName("Right", (int)ClassifierID::Right);
+    VisionSensor.writeName("Empty", (int)ClassifierID::Empty);
+}
+void FinishLearning() {
+    IsLearning = false;
+    WriteNames();
+}
 bool ResetCooldown(void * = nullptr)
 {
     Serial.println("Cooldown reset");
@@ -123,7 +134,7 @@ void IRReceive()
             if (!IsProcessing)
                 ResetTiltWithoutCooldown();
             if (IsProcessing && IsLearning)
-                IsLearning = false;
+                FinishLearning();
         }
         else if (buttonCode == IRButtonCode::Left || buttonCode == IRButtonCode::Right ||
                  buttonCode == IRButtonCode::Down)
@@ -137,7 +148,7 @@ void IRReceive()
         }
         else if (buttonCode == IRButtonCode::OK && IsLearning)
         {
-            IsLearning = false;
+            FinishLearning();
         }
         else if (buttonCode == IRButtonCode::Refresh)
         {
