@@ -24,7 +24,8 @@ enum class IRButtonCode : uint8_t
     Left = 0x07,
     Right = 0x09,
     Down = 0x19,
-    OK = 0x15
+    OK = 0x15,
+    Refresh = 0x43
 };
 
 Servo TiltServo;
@@ -32,9 +33,13 @@ UltraSonicDistanceSensor DistanceSensor(2, 3);
 DFRobot_HuskyLens VisionSensor;
 float Distance;
 bool IsProcessing = false, IsLearning = false, IsBinFull = false;
+const int TiltNeutral = 128, TiltLeft = 64, TiltRight = 96, TiltLength = 3000, TiltCooldown = 1000;
+const int TiltOverallLength = TiltLength + TiltCooldown;
+int CurrentTilting = 0;
+int TiltTime = 0;
+int TiltCooldownTime = 0;
 ClassifierID LearningID = ClassifierID::Empty;
 volatile struct TinyIRReceiverCallbackDataStruct IRCallbackData;
-
 
 Scheduler TaskScheduler;
 void IRReceive();
@@ -45,6 +50,8 @@ void UpdateDistance();
 Task UpdateDistanceTask(50, TASK_FOREVER, &UpdateDistance, &TaskScheduler, true);
 void LearnProcess();
 Task LearnProcessTask(100, TASK_FOREVER, &LearnProcess, &TaskScheduler, true);
+void ResetTiltProcess();
+Task ResetTiltProcessTask(200, TASK_FOREVER, &ResetTiltProcess, &TaskScheduler, true);
 void Process();
 Task ProcessTask(50, TASK_FOREVER, &Process, &TaskScheduler, true);
 
@@ -67,10 +74,38 @@ void setup()
     TaskScheduler.startNow();
 }
 
+void ResetTilt()
+{
+    TiltServo.write(TiltNeutral);
+    TiltTime = 0;
+    TiltCooldownTime = millis();
+}
+void ResetTiltProcess()
+{
+    Serial.print(TiltTime);
+    Serial.print(" ");
+    Serial.println(TiltCooldownTime);
+    if (TiltTime != 0 && millis() - TiltTime > TiltLength)
+    {
+        ResetTilt();
+    } 
+    if (TiltCooldownTime != 0 && millis() - TiltCooldownTime > TiltCooldown) {
+        TiltCooldownTime = 0;
+    }
+}
+void TiltTo(int value)
+{
+    if (TiltTime != 0 || TiltCooldownTime != 0)
+        return;
+    TiltServo.write(value);
+    TiltTime = millis();
+    TiltCooldownTime = 0;
+}
 void IRReceive()
 {
-    if (IRReceiveTask.isFirstIteration()) {
-      Serial.println("Hi");
+    if (IRReceiveTask.isFirstIteration())
+    {
+        Serial.println("Hi");
     }
     if (IRCallbackData.justWritten && !IRCallbackData.isRepeat)
     {
@@ -85,6 +120,8 @@ void IRReceive()
         if (buttonCode == IRButtonCode::Power)
         {
             IsProcessing = !IsProcessing;
+            if (!IsProcessing)
+                ResetTilt();
             if (IsProcessing && IsLearning)
                 IsLearning = false;
         }
@@ -96,10 +133,16 @@ void IRReceive()
             LearningID = buttonCode == IRButtonCode::Down   ? ClassifierID::Empty
                          : buttonCode == IRButtonCode::Left ? ClassifierID::Left
                                                             : ClassifierID::Right;
+            ResetTilt();
         }
         else if (buttonCode == IRButtonCode::OK && IsLearning)
         {
             IsLearning = false;
+        }
+        else if (buttonCode == IRButtonCode::Refresh)
+        {
+            VisionSensor.forgetLearn();
+            ResetTilt();
         }
     }
 }
@@ -112,13 +155,15 @@ void UpdateStatusLED()
 }
 void UpdateDistance()
 {
-    if (!IsProcessing) return;
+    if (!IsProcessing)
+        return;
     Distance = DistanceSensor.measureDistanceCm();
-    Serial.println(Distance);
+    // Serial.println(Distance);
 }
 void LearnProcess()
 {
-    if (!IsLearning) return;
+    if (!IsLearning)
+        return;
     if (!VisionSensor.learnOnece((int)LearningID))
     {
         Serial.print("Learning not successful on ");
@@ -127,16 +172,18 @@ void LearnProcess()
 }
 void Process()
 {
-    if (!IsProcessing) return;
-    if (Distance < 20)
+    if (!IsProcessing)
+        return;
+    if (Distance < 20 && TiltTime == 0)
     {
         VisionSensor.request();
-        if (VisionSensor.isAppear(1, HUSKYLENSResultBlock))
+        if (VisionSensor.isAppear((int)ClassifierID::Left, HUSKYLENSResultBlock))
         {
-            TiltServo.write(90);
-            delay(3000);
-            TiltServo.write(0);
-            delay(1000);
+            TiltTo(TiltLeft);
+        }
+        else if (VisionSensor.isAppear((int)ClassifierID::Right, HUSKYLENSResultBlock))
+        {
+            TiltTo(TiltRight);
         }
     }
 }
@@ -144,18 +191,6 @@ void Process()
 void loop()
 {
     TaskScheduler.execute();
-    // delay(100);
-    // IRReceive();
-    // UpdateStatusLED();
-    // if (IsProcessing)
-    // {
-    //     UpdateDistance();
-    //     Process();
-    // }
-    // else if (IsLearning)
-    // {
-    //     LearnProcess();
-    // }
 }
 
 void handleReceivedTinyIRData(uint16_t aAddress, uint8_t aCommand, bool isRepeat)
