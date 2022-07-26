@@ -1,6 +1,7 @@
 #define DECODE_NEC // Includes Apple and Onkyo
 
 #include "DFRobot_HuskyLens.h"
+#include "arduino-timer.h"
 #include <Arduino.h>
 #include <HCSR04.h>
 #include <IRremote.hpp>
@@ -36,8 +37,9 @@ bool IsProcessing = false, IsLearning = false, IsBinFull = false;
 const int TiltNeutral = 128, TiltLeft = 64, TiltRight = 96, TiltLength = 3000, TiltCooldown = 1000;
 const int TiltOverallLength = TiltLength + TiltCooldown;
 int CurrentTilting = 0;
-int TiltTime = 0;
-int TiltCooldownTime = 0;
+auto TiltTimer = timer_create_default();
+bool IsTilted, IsInCooldown;
+
 ClassifierID LearningID = ClassifierID::Empty;
 volatile struct TinyIRReceiverCallbackDataStruct IRCallbackData;
 
@@ -50,8 +52,6 @@ void UpdateDistance();
 Task UpdateDistanceTask(50, TASK_FOREVER, &UpdateDistance, &TaskScheduler, true);
 void LearnProcess();
 Task LearnProcessTask(100, TASK_FOREVER, &LearnProcess, &TaskScheduler, true);
-void ResetTiltProcess();
-Task ResetTiltProcessTask(200, TASK_FOREVER, &ResetTiltProcess, &TaskScheduler, true);
 void Process();
 Task ProcessTask(50, TASK_FOREVER, &Process, &TaskScheduler, true);
 
@@ -74,39 +74,39 @@ void setup()
     TaskScheduler.startNow();
 }
 
-void ResetTilt()
+bool ResetCooldown(void * = nullptr)
+{
+    Serial.println("Cooldown reset");
+    IsInCooldown = false;
+    return true;
+}
+bool ResetTiltWithoutCooldown(void * = nullptr)
+{
+    TiltTimer.cancel();
+    TiltServo.write(TiltNeutral);
+    IsTilted = false;
+    IsInCooldown = false;
+    return true;
+}
+bool ResetTilt(void * = nullptr)
 {
     TiltServo.write(TiltNeutral);
-    TiltTime = 0;
-    TiltCooldownTime = millis();
-}
-void ResetTiltProcess()
-{
-    Serial.print(TiltTime);
-    Serial.print(" ");
-    Serial.println(TiltCooldownTime);
-    if (TiltTime != 0 && millis() - TiltTime > TiltLength)
-    {
-        ResetTilt();
-    } 
-    if (TiltCooldownTime != 0 && millis() - TiltCooldownTime > TiltCooldown) {
-        TiltCooldownTime = 0;
-    }
+    IsTilted = false;
+    IsInCooldown = true;
+    TiltTimer.in(TiltCooldown, ResetCooldown);
+    return true;
 }
 void TiltTo(int value)
 {
-    if (TiltTime != 0 || TiltCooldownTime != 0)
+    if (IsTilted || IsInCooldown)
         return;
     TiltServo.write(value);
-    TiltTime = millis();
-    TiltCooldownTime = 0;
+    IsTilted = true;
+    IsInCooldown = false;
+    TiltTimer.in(TiltLength, ResetTilt);
 }
 void IRReceive()
 {
-    if (IRReceiveTask.isFirstIteration())
-    {
-        Serial.println("Hi");
-    }
     if (IRCallbackData.justWritten && !IRCallbackData.isRepeat)
     {
         IRCallbackData.justWritten = false;
@@ -121,7 +121,7 @@ void IRReceive()
         {
             IsProcessing = !IsProcessing;
             if (!IsProcessing)
-                ResetTilt();
+                ResetTiltWithoutCooldown();
             if (IsProcessing && IsLearning)
                 IsLearning = false;
         }
@@ -133,7 +133,7 @@ void IRReceive()
             LearningID = buttonCode == IRButtonCode::Down   ? ClassifierID::Empty
                          : buttonCode == IRButtonCode::Left ? ClassifierID::Left
                                                             : ClassifierID::Right;
-            ResetTilt();
+            ResetTiltWithoutCooldown();
         }
         else if (buttonCode == IRButtonCode::OK && IsLearning)
         {
@@ -142,7 +142,7 @@ void IRReceive()
         else if (buttonCode == IRButtonCode::Refresh)
         {
             VisionSensor.forgetLearn();
-            ResetTilt();
+            ResetTiltWithoutCooldown();
         }
     }
 }
@@ -174,7 +174,7 @@ void Process()
 {
     if (!IsProcessing)
         return;
-    if (Distance < 20 && TiltTime == 0)
+    if (Distance < 20)
     {
         VisionSensor.request();
         if (VisionSensor.isAppear((int)ClassifierID::Left, HUSKYLENSResultBlock))
@@ -191,6 +191,7 @@ void Process()
 void loop()
 {
     TaskScheduler.execute();
+    TiltTimer.tick();
 }
 
 void handleReceivedTinyIRData(uint16_t aAddress, uint8_t aCommand, bool isRepeat)
