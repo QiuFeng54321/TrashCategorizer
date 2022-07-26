@@ -30,8 +30,10 @@ enum class IRButtonCode : uint8_t
 };
 
 Servo TiltServo;
+const int TiltServoPin = 12;
 UltraSonicDistanceSensor DistanceSensor(2, 3);
 DFRobot_HuskyLens VisionSensor;
+const float MaximumDetectionRange = 20;
 float Distance;
 bool IsProcessing = false, IsLearning = false, IsBinFull = false;
 const int TiltNeutral = 128, TiltLeft = 64, TiltRight = 96, TiltLength = 3000, TiltCooldown = 1000;
@@ -63,7 +65,7 @@ void setup()
     // Just to know which program is running on my Arduino
     Serial.println(F("START " __FILE__ " from " __DATE__ __TIME__ "\r\nUsing library version " VERSION_IRREMOTE));
 
-    TiltServo.attach(12);
+    TiltServo.attach(TiltServoPin);
     pinMode(StatusRedPin, OUTPUT);
     pinMode(StatusYellowPin, OUTPUT);
     pinMode(StatusGreenPin, OUTPUT);
@@ -185,7 +187,7 @@ void Process()
 {
     if (!IsProcessing)
         return;
-    if (Distance < 20)
+    if (Distance < MaximumDetectionRange)
     {
         VisionSensor.request();
         if (VisionSensor.isAppear((int)ClassifierID::Left, HUSKYLENSResultBlock))
