@@ -36,7 +36,7 @@ DFRobot_HuskyLens VisionSensor;
 const float MaximumDetectionRange = 20;
 float Distance;
 bool IsProcessing = false, IsLearning = false, IsBinFull = false;
-const int TiltNeutral = 128, TiltLeft = 64, TiltRight = 96, TiltLength = 3000, TiltCooldown = 1000;
+const int TiltNeutral = 90, TiltLeft = 45, TiltRight = 135, TiltLength = 3000, TiltCooldown = 1000;
 const int TiltOverallLength = TiltLength + TiltCooldown;
 int CurrentTilting = 0;
 auto TiltTimer = timer_create_default();
