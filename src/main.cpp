@@ -36,11 +36,13 @@ DFRobot_HuskyLens VisionSensor;
 const float MaximumDetectionRange = 20;
 float Distance;
 bool IsProcessing = false, IsLearning = false, IsBinFull = false;
-const int TiltNeutral = 90, TiltLeft = 45, TiltRight = 135, TiltLength = 3000, TiltCooldown = 1000;
+const int TiltNeutral = 85, TiltLeft = 40, TiltRight = 130, TiltLength = 3000, TiltCooldown = 1000,
+          TiltWaitLength = 1000;
 const int TiltOverallLength = TiltLength + TiltCooldown;
 int CurrentTilting = 0;
 auto TiltTimer = timer_create_default();
-bool IsTilted, IsInCooldown;
+bool IsTilted, IsInCooldown, IsWaiting;
+int TiltValue = TiltNeutral;
 
 ClassifierID LearningID = ClassifierID::Empty;
 volatile struct TinyIRReceiverCallbackDataStruct IRCallbackData;
@@ -58,6 +60,7 @@ void Process();
 Task ProcessTask(50, TASK_FOREVER, &Process, &TaskScheduler, true);
 
 void WriteNames();
+bool ResetTiltWithoutCooldown(void * = nullptr);
 
 void setup()
 {
@@ -72,18 +75,21 @@ void setup()
     Serial.println("Setting up HuskyLens...");
     VisionSensor.beginI2CUntilSuccess();
     WriteNames();
+    ResetTiltWithoutCooldown();
     Serial.println("Succeeded");
     VisionSensor.writeAlgorithm(ALGORITHM_OBJECT_CLASSIFICATION);
     initPCIInterruptForTinyReceiver();
     Serial.println("Ready to receive NEC IR signals");
     TaskScheduler.startNow();
 }
-void WriteNames() {
+void WriteNames()
+{
     VisionSensor.writeName("Left", (int)ClassifierID::Left);
     VisionSensor.writeName("Right", (int)ClassifierID::Right);
     VisionSensor.writeName("Empty", (int)ClassifierID::Empty);
 }
-void FinishLearning() {
+void FinishLearning()
+{
     IsLearning = false;
     WriteNames();
 }
@@ -99,6 +105,7 @@ bool ResetTiltWithoutCooldown(void * = nullptr)
     TiltServo.write(TiltNeutral);
     IsTilted = false;
     IsInCooldown = false;
+    IsWaiting = false;
     return true;
 }
 bool ResetTilt(void * = nullptr)
@@ -106,17 +113,37 @@ bool ResetTilt(void * = nullptr)
     TiltServo.write(TiltNeutral);
     IsTilted = false;
     IsInCooldown = true;
+    IsWaiting = false;
     TiltTimer.in(TiltCooldown, ResetCooldown);
     return true;
 }
 void TiltTo(int value)
 {
-    if (IsTilted || IsInCooldown)
-        return;
     TiltServo.write(value);
     IsTilted = true;
-    IsInCooldown = false;
     TiltTimer.in(TiltLength, ResetTilt);
+}
+bool ManageTilt(void * = nullptr)
+{
+    IsWaiting = false;
+    IsInCooldown = false;
+    VisionSensor.request();
+    if (VisionSensor.isAppear((int)ClassifierID::Left, HUSKYLENSResultBlock))
+    {
+        TiltTo(TiltLeft);
+    }
+    else if (VisionSensor.isAppear((int)ClassifierID::Right, HUSKYLENSResultBlock))
+    {
+        TiltTo(TiltRight);
+    }
+    return true;
+}
+void ProcessTilt()
+{
+    if (IsWaiting || IsTilted || IsInCooldown)
+        return;
+    IsWaiting = true;
+    TiltTimer.in(TiltWaitLength, ManageTilt);
 }
 void IRReceive()
 {
@@ -189,15 +216,7 @@ void Process()
         return;
     if (Distance < MaximumDetectionRange)
     {
-        VisionSensor.request();
-        if (VisionSensor.isAppear((int)ClassifierID::Left, HUSKYLENSResultBlock))
-        {
-            TiltTo(TiltLeft);
-        }
-        else if (VisionSensor.isAppear((int)ClassifierID::Right, HUSKYLENSResultBlock))
-        {
-            TiltTo(TiltRight);
-        }
+        ProcessTilt();
     }
 }
 
