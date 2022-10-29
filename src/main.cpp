@@ -1,33 +1,6 @@
-#define DECODE_NEC // Includes Apple and Onkyo
 
-#include "DFRobot_HuskyLens.h"
-#include "arduino-timer.h"
-#include <Arduino.h>
-#include <HCSR04.h>
-#include <IRremote.hpp>
-#include <Servo.h>
-#include <TaskScheduler.h>
-#define IR_INPUT_PIN 8
-#include "TinyIRReceiver.hpp"
-
-const int StatusRedPin = 10, StatusYellowPin = 11, StatusGreenPin = 9;
-// const int StatusLEDBrightness = 255;
-
-enum class ClassifierID
-{
-    Empty = 1,
-    Left = 2,
-    Right = 3
-};
-enum class IRButtonCode : uint8_t
-{
-    Power = 0x44,
-    Left = 0x07,
-    Right = 0x09,
-    Down = 0x19,
-    OK = 0x15,
-    Refresh = 0x43
-};
+#include "Common.hpp"
+#include "EEPROMHelper.hpp"
 
 Servo TiltServo;
 const int TiltServoPin = 12;
@@ -36,38 +9,42 @@ DFRobot_HuskyLens VisionSensor;
 const float MaximumDetectionRange = 20;
 float Distance;
 bool IsProcessing = false, IsLearning = false, IsBinFull = false;
-const int TiltNeutral = 85, TiltLeft = 40, TiltRight = 130, TiltLength = 3000, TiltCooldown = 1000,
-          TiltWaitLength = 1000;
+const int TiltNeutral = 85, TiltLeft = 40, TiltRight = 130, TiltLength = 3000,
+          TiltCooldown = 1000, TiltWaitLength = 1000;
 const int TiltOverallLength = TiltLength + TiltCooldown;
 int CurrentTilting = 0;
 auto TiltTimer = timer_create_default();
 bool IsTilted, IsInCooldown, IsWaiting;
 int TiltValue = TiltNeutral;
 
-ClassifierID LearningID = ClassifierID::Empty;
+ClassifierType CurrentLearningType = ClassifierType::Empty;
+int CurrentLearningID;
+
 volatile struct TinyIRReceiverCallbackDataStruct IRCallbackData;
 
 Scheduler TaskScheduler;
 void IRReceive();
 Task IRReceiveTask(50, TASK_FOREVER, &IRReceive, &TaskScheduler, true);
 void UpdateStatusLED();
-Task UpdateStatusTask(100, TASK_FOREVER, &UpdateStatusLED, &TaskScheduler, true);
+Task UpdateStatusTask(100, TASK_FOREVER, &UpdateStatusLED, &TaskScheduler,
+                      true);
 void UpdateDistance();
-Task UpdateDistanceTask(50, TASK_FOREVER, &UpdateDistance, &TaskScheduler, true);
+Task UpdateDistanceTask(50, TASK_FOREVER, &UpdateDistance, &TaskScheduler,
+                        true);
 void LearnProcess();
 Task LearnProcessTask(100, TASK_FOREVER, &LearnProcess, &TaskScheduler, true);
 void Process();
 Task ProcessTask(50, TASK_FOREVER, &Process, &TaskScheduler, true);
 
 void WriteNames();
-bool ResetTiltWithoutCooldown(void * = nullptr);
+bool ResetTiltWithoutCooldown(void* = nullptr);
 
-void setup()
-{
+void setup() {
     Serial.begin(9600);
     // Just to know which program is running on my Arduino
-    Serial.println(F("START " __FILE__ " from " __DATE__ __TIME__ "\r\nUsing library version " VERSION_IRREMOTE));
-
+    Serial.println(F("START " __FILE__ " from " __DATE__ __TIME__
+                     "\r\nUsing library version " VERSION_IRREMOTE));
+    InitializeEEPROM();
     TiltServo.attach(TiltServoPin);
     pinMode(StatusRedPin, OUTPUT);
     pinMode(StatusYellowPin, OUTPUT);
@@ -82,25 +59,25 @@ void setup()
     Serial.println("Ready to receive NEC IR signals");
     TaskScheduler.startNow();
 }
-void WriteNames()
-{
-    VisionSensor.writeName("Left", (int)ClassifierID::Left);
-    VisionSensor.writeName("Right", (int)ClassifierID::Right);
-    VisionSensor.writeName("Empty", (int)ClassifierID::Empty);
+void WriteNames() {
+    for (int i = LeftIDOffset; i < Header.LeftTop; i++) {
+        VisionSensor.writeName("L" + i, (int)ClassifierType::Left);
+    }
+    for (int i = RightIDOffset; i < Header.RightTop; i++) {
+        VisionSensor.writeName("R" + i, (int)ClassifierType::Right);
+    }
+    VisionSensor.writeName("E", EmptyID);
 }
-void FinishLearning()
-{
+void FinishLearning() {
     IsLearning = false;
     WriteNames();
 }
-bool ResetCooldown(void * = nullptr)
-{
+bool ResetCooldown(void* = nullptr) {
     Serial.println("Cooldown reset");
     IsInCooldown = false;
     return true;
 }
-bool ResetTiltWithoutCooldown(void * = nullptr)
-{
+bool ResetTiltWithoutCooldown(void* = nullptr) {
     TiltTimer.cancel();
     TiltServo.write(TiltNeutral);
     IsTilted = false;
@@ -108,8 +85,7 @@ bool ResetTiltWithoutCooldown(void * = nullptr)
     IsWaiting = false;
     return true;
 }
-bool ResetTilt(void * = nullptr)
-{
+bool ResetTilt(void* = nullptr) {
     TiltServo.write(TiltNeutral);
     IsTilted = false;
     IsInCooldown = true;
@@ -117,38 +93,33 @@ bool ResetTilt(void * = nullptr)
     TiltTimer.in(TiltCooldown, ResetCooldown);
     return true;
 }
-void TiltTo(int value)
-{
+void TiltTo(int value) {
     TiltServo.write(value);
     IsTilted = true;
     TiltTimer.in(TiltLength, ResetTilt);
 }
-bool ManageTilt(void * = nullptr)
-{
+bool ManageTilt(void* = nullptr) {
     IsWaiting = false;
     IsInCooldown = false;
     VisionSensor.request();
-    if (VisionSensor.isAppear((int)ClassifierID::Left, HUSKYLENSResultBlock))
-    {
-        TiltTo(TiltLeft);
-    }
-    else if (VisionSensor.isAppear((int)ClassifierID::Right, HUSKYLENSResultBlock))
-    {
-        TiltTo(TiltRight);
+    if (VisionSensor.countBlocks() > 0) {
+        auto id = VisionSensor.blocks.read();
+        auto klass = GetClass(id.ID);
+        if (klass == ClassifierType::Left) {
+            TiltTo(TiltLeft);
+        } else if (klass == ClassifierType::Right) {
+            TiltTo(TiltRight);
+        }
     }
     return true;
 }
-void ProcessTilt()
-{
-    if (IsWaiting || IsTilted || IsInCooldown)
-        return;
+void ProcessTilt() {
+    if (IsWaiting || IsTilted || IsInCooldown) return;
     IsWaiting = true;
     TiltTimer.in(TiltWaitLength, ManageTilt);
 }
-void IRReceive()
-{
-    if (IRCallbackData.justWritten && !IRCallbackData.isRepeat)
-    {
+void IRReceive() {
+    if (IRCallbackData.justWritten && !IRCallbackData.isRepeat) {
         IRCallbackData.justWritten = false;
         Serial.print("Address=0x");
         Serial.print(IRCallbackData.Address, HEX);
@@ -157,77 +128,62 @@ void IRReceive()
         Serial.println();
 
         auto buttonCode = (IRButtonCode)IRCallbackData.Command;
-        if (buttonCode == IRButtonCode::Power)
-        {
+        if (buttonCode == IRButtonCode::Power) {
             IsProcessing = !IsProcessing;
-            if (!IsProcessing)
-                ResetTiltWithoutCooldown();
-            if (IsProcessing && IsLearning)
-                FinishLearning();
-        }
-        else if (buttonCode == IRButtonCode::Left || buttonCode == IRButtonCode::Right ||
-                 buttonCode == IRButtonCode::Down)
-        {
+            if (!IsProcessing) ResetTiltWithoutCooldown();
+            if (IsProcessing && IsLearning) FinishLearning();
+        } else if (buttonCode == IRButtonCode::Left ||
+                   buttonCode == IRButtonCode::Right ||
+                   buttonCode == IRButtonCode::Down) {
             IsLearning = true;
             IsProcessing = false;
-            LearningID = buttonCode == IRButtonCode::Down   ? ClassifierID::Empty
-                         : buttonCode == IRButtonCode::Left ? ClassifierID::Left
-                                                            : ClassifierID::Right;
+            CurrentLearningType =
+                buttonCode == IRButtonCode::Down   ? ClassifierType::Empty
+                : buttonCode == IRButtonCode::Left ? ClassifierType::Left
+                                                   : ClassifierType::Right;
             ResetTiltWithoutCooldown();
-        }
-        else if (buttonCode == IRButtonCode::OK && IsLearning)
-        {
+            CurrentLearningID = HeaderAddID(CurrentLearningType);
+        } else if (buttonCode == IRButtonCode::OK && IsLearning) {
             FinishLearning();
-        }
-        else if (buttonCode == IRButtonCode::Refresh)
-        {
+        } else if (buttonCode == IRButtonCode::Refresh) {
             VisionSensor.forgetLearn();
+            ResetHeader();
             ResetTiltWithoutCooldown();
         }
     }
 }
 
-void UpdateStatusLED()
-{
+void UpdateStatusLED() {
     digitalWrite(StatusGreenPin, IsProcessing ? HIGH : LOW);
     digitalWrite(StatusYellowPin, IsLearning ? HIGH : LOW);
     digitalWrite(StatusRedPin, !IsProcessing || IsBinFull ? HIGH : LOW);
 }
-void UpdateDistance()
-{
-    if (!IsProcessing)
-        return;
+void UpdateDistance() {
+    if (!IsProcessing) return;
     Distance = DistanceSensor.measureDistanceCm();
     // Serial.println(Distance);
 }
-void LearnProcess()
-{
-    if (!IsLearning)
-        return;
-    if (!VisionSensor.learnOnece((int)LearningID))
-    {
+void LearnProcess() {
+    if (!IsLearning) return;
+    if (!VisionSensor.learnOnece(CurrentLearningID)) {
         Serial.print("Learning not successful on ");
-        Serial.println((int)LearningID);
+        Serial.println(CurrentLearningID);
     }
 }
-void Process()
-{
-    if (!IsProcessing)
-        return;
-    if (Distance < MaximumDetectionRange)
-    {
+void Process() {
+    if (!IsProcessing) return;
+    if (Distance < MaximumDetectionRange) {
         ProcessTilt();
     }
 }
 
-void loop()
-{
+void loop() {
     TaskScheduler.execute();
     TiltTimer.tick();
 }
 
-void handleReceivedTinyIRData(uint16_t aAddress, uint8_t aCommand, bool isRepeat)
-{
+void handleReceivedTinyIRData(uint16_t aAddress, uint8_t aCommand,
+                              bool isRepeat) {
     IRCallbackData.Address = aAddress;
     IRCallbackData.Command = aCommand;
     IRCallbackData.isRepeat = isRepeat;
