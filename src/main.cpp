@@ -1,4 +1,5 @@
 
+#include "AverageClass.hpp"
 #include "Common.hpp"
 #include "EEPROMHelper.hpp"
 
@@ -10,7 +11,7 @@ const float MaximumDetectionRange = 20;
 float Distance;
 bool IsProcessing = false, IsLearning = false, IsBinFull = false;
 const int TiltNeutral = 85, TiltLeft = 40, TiltRight = 130, TiltLength = 3000,
-          TiltCooldown = 1000, TiltWaitLength = 1000;
+          TiltCooldown = 1000, TiltWaitLength = 300;
 const int TiltOverallLength = TiltLength + TiltCooldown;
 int CurrentTilting = 0;
 auto TiltTimer = timer_create_default();
@@ -90,6 +91,7 @@ bool ResetTilt(void* = nullptr) {
     IsTilted = false;
     IsInCooldown = true;
     IsWaiting = false;
+    ResetFeed();
     TiltTimer.in(TiltCooldown, ResetCooldown);
     return true;
 }
@@ -103,8 +105,11 @@ bool ManageTilt(void* = nullptr) {
     IsInCooldown = false;
     VisionSensor.request();
     if (VisionSensor.countBlocks() > 0) {
-        auto id = VisionSensor.blocks.read();
-        auto klass = GetClass(id.ID);
+        auto id = VisionSensor.getBlockID();
+        // Serial.print("ID: ");
+        Serial.println((int)id, DEC); // ???? 不知道为啥这行加进去数字就好了，怪
+        auto klassRead = GetClass(id);
+        auto klass = FeedClassifier(klassRead);
         if (klass == ClassifierType::Left) {
             TiltTo(TiltLeft);
         } else if (klass == ClassifierType::Right) {
@@ -130,6 +135,7 @@ void IRReceive() {
         auto buttonCode = (IRButtonCode)IRCallbackData.Command;
         if (buttonCode == IRButtonCode::Power) {
             IsProcessing = !IsProcessing;
+            ResetFeed();
             if (!IsProcessing) ResetTiltWithoutCooldown();
             if (IsProcessing && IsLearning) FinishLearning();
         } else if (buttonCode == IRButtonCode::Left ||

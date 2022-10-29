@@ -9,7 +9,20 @@ struct ROMHeader {
 const short LeftIDOffset = 32, RightIDOffset = 64, EmptyID = 96;
 ROMHeader Header;
 
-inline void SaveHeader() { EEPROM.put(0, Header); }
+inline void PrintHeaderInfo(const ROMHeader& header) {
+    Serial.print("Header: ");
+    Serial.print(header.Initialized ? "Initialized, " : "Uninitialized, ");
+    Serial.print("LeftTop = ");
+    Serial.print(header.LeftTop);
+    Serial.print(", RightTop = ");
+    Serial.println(header.RightTop);
+}
+
+inline void SaveHeader() {
+    EEPROM.put(0, Header);
+    Serial.println("Header save:");
+    PrintHeaderInfo(Header);
+}
 
 inline void ResetHeader() {
     Header.Initialized = true;
@@ -18,10 +31,14 @@ inline void ResetHeader() {
     SaveHeader();
 }
 inline void InitializeEEPROM() {
+    Serial.println("Initializing EEPROM Header..."); 
     EEPROM.get(0, Header);
     if (!Header.Initialized) {
+        Serial.println("First time initialization.");
         ResetHeader();
     }
+    Serial.println("Header initialized.");
+    PrintHeaderInfo(Header);
 }
 
 inline short HeaderAddID(ClassifierType type) {
@@ -34,8 +51,9 @@ inline short HeaderAddID(ClassifierType type) {
 
 inline ClassifierType GetClass(int id) {
     if (id == EmptyID) return ClassifierType::Empty;
-    if (LeftIDOffset <= id && id <= RightIDOffset) return ClassifierType::Left;
-    return ClassifierType::Right;
+    if (LeftIDOffset <= id && id <= Header.LeftTop) return ClassifierType::Left;
+    if (RightIDOffset <= id && id <= Header.RightTop) return ClassifierType::Right;
+    return ClassifierType::None;
 }
 
 inline bool ReadROMClass(int id) {

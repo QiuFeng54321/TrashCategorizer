@@ -45,10 +45,10 @@ typedef enum HUSKYLENSResultType_t
 
 class DFRobot_HuskyLens : public HUSKYLENS
 {
-private:
+public:
+// private:
     bool isWire = false;
 
-public:
     void beginI2CUntilSuccess()
     {
         Wire.begin();
@@ -267,7 +267,7 @@ public:
             return -1.0f;
         }
     }
-
+public:
     HUSKYLENSBlockDirectInfo readBlockParameterDirect(int index)
     {
         HUSKYLENSResult result = blocks.readDirect(index - 1);

@@ -517,6 +517,15 @@ public:
         }
         return counter;
     }
+    int16_t getBlockID()
+    {
+        for (int i = 0; i < protocolInfo.protocolSize; i++)
+        {
+            if (protocolPtr[i].command == COMMAND_RETURN_BLOCK && protocolPtr[i].ID != -1)
+                return protocolPtr[i].ID;
+        }
+        return -1;
+    }
     int16_t countArrows(int16_t ID)
     {
         int16_t counter = 0;

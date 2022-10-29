@@ -18,7 +18,7 @@
 const int StatusRedPin = 10, StatusYellowPin = 11, StatusGreenPin = 9;
 // const int StatusLEDBrightness = 255;
 
-enum class ClassifierType { Empty = 1, Left = 2, Right = 3 };
+enum class ClassifierType { None = 0, Empty = 1, Left = 2, Right = 3 };
 enum class IRButtonCode : uint8_t {
     Power = 0x44,
     Left = 0x07,
